@@ -25,7 +25,7 @@ public class RsaKeyPoolPolicy : PooledObjectPolicy<RSA>
 
     public override bool Return(RSA obj) => true;
 }
-{% endhighligh %}
+{% endhighlight %}
 
 И зарегистрируем ее в DI:
 {% highlight csharp %}
@@ -36,7 +36,7 @@ builder.Services.TryAddSingleton<ObjectPool<RSA>>(serviceProvider =>
     var policy = new RsaKeyPoolPolicy("cert_file_with_private_key", "your_super_strong_password");
     return provider.Create(policy);
 });
-{% endhighligh %}
+{% endhighlight %}
 
 С обработкой тела ответа надо проделать небольшой трюк. Перед началом обработки запроса необходимо заменить stream, куда будет писаться ответ на контроллируемый этой middleware memory stream, чтобы запись шла туда. Затем необходимо скорпировать полученный ответ в исходный стрим и вернуть его на место.
 {% highlight csharp %}
@@ -81,7 +81,7 @@ public class SigningMiddleware : IMiddleware
 
     }
 }
-{% endhighligh %}
+{% endhighlight %}
 
 Подключение middleware тривиально:
 {% highlight csharp %}
@@ -90,7 +90,7 @@ var app = builder.Build();
 app.UseMiddleware<SigningMiddleware.Services.SigningMiddleware>();
 app.MapGet("/", () => "Hello World!");
 app.MapGet("/time", () => $"{DateTime.Now}");
-{% endhighligh %}
+{% endhighlight %}
 
 В итоге получаем заголовок с криптоподписью тела:
 ```
