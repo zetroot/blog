@@ -37,6 +37,7 @@ plugins:
 header_pages:
   - index.markdown
   - about.markdown
+  - pgp.markdown
 
 style: dark
 
