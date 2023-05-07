@@ -65,7 +65,7 @@ public int GetHashCode(Transaction obj) =>
       );
 ```
 
-## Пора приготовить немного тестов!
+# Пора приготовить немного тестов!
 
 Сам тест прост как 3 рубля в тихую погоду:
 ```cs
@@ -120,9 +120,11 @@ public class TestData : IEnumerable
     }
 }
 ```
-Чтож, этот набор тестов дает нам полное покрытие метода `Equals`. Теперь можно вычесть из одной коллекции другую при помощи `.Except()` и идти пить чай. Или нет? Ведь тестировщики приносят кучу примеров, когда код работает не так как ожидалось. Почему?
+Чтож, этот набор тестов дает нам полное покрытие метода `Equals`. 
+![Покрытие кода](/assets/equality-comparers/equals-coverage.png)
+Теперь можно вычесть из одной коллекции другую при помощи `.Except()` и идти пить чай. Или нет? Ведь тестировщики приносят кучу примеров, когда код работает не так как ожидалось. Почему?
 
-## А что мы тестировали то?
+# А что мы тестировали то?
 Реальный код, который использует компаратор немного отличается от тестового и выглядит примерно следующим образом:
 ```cs
 var currentCollection = GetFromCurrentReport();
@@ -150,3 +152,83 @@ public void Except_WhenCalled_ReturnsEmptyCollection(Transaction x, Transaction 
         diff.Should().NotBeEmpty();
 }
 ```
+И... 10 из 23 тестов не проходят!
+![Провал нового теста на тех же данных](/assets/equality-comparers/new-test-failure.png)
+Но кое что изменилось, теперь появилось покрытие в методе `TransactionComparer.GetHashCode()`!
+Пора заглянуть под капот linq-метода `Except()`
+
+# Как вычитаются множества
+Расчехляем декомпилятор или скачиваем символы отладки и начинаем проваливаться в реализацию `Except()`.
+Собственно сам метод проверяет входные параметры и возвращает генератор:
+```cs
+private static IEnumerable<TSource> ExceptIterator<TSource>(
+    IEnumerable<TSource> first,
+    IEnumerable<TSource> second,
+    IEqualityComparer<TSource> comparer)
+{
+    HashSet<TSource> set = new HashSet<TSource>(second, comparer);
+    foreach (TSource source in first)
+    {
+        if (set.Add(source))
+            yield return source;
+    }
+}
+``` 
+Что происходит? Из вычитаемой последовательности создается `HashSet`, в который в цикле напихиваются элементы исходной последовательности. Те, которые запихнуть удалось - возвращаются как элементы результирующей последовательности. We need to go deeper! Что происходит в вызове `HashSet.Add()`? Как хэшсет определяет новые элементы?
+За полным кодом с разными хитрыми хаками можно сходить в [репозиторий рантайма](https://github.com/dotnet/runtime/blob/v7.0.5/src/libraries/System.Private.CoreLib/src/System/Collections/Generic/HashSet.cs#L1082), рассмотрим только основные пути выполнения:
+```cs
+private bool AddIfNotPresent(T value, out int location)
+{
+    /* Код подготовки */
+
+    if (comparer == null)
+    {
+        /* Не наш случай - comparer предоставляется */
+    }
+    else
+    {
+        hashCode = value != null ? comparer.GetHashCode(value) : 0;
+        bucket = ref GetBucketRef(hashCode);
+        int i = bucket - 1; // Value in _buckets is 1-based
+        while (i >= 0)
+        {
+            ref Entry entry = ref entries[i];
+            if (entry.HashCode == hashCode && comparer.Equals(entry.Value, value))
+            {
+                location = i;
+                return false; // <<== Выход в случае, если элемент не может быть добавлен
+            }
+            i = entry.Next;
+
+            collisionCount++;
+            /*Обаботка конкуретного обновления коллекции*/
+        }
+    }
+
+    /*
+    Бла бла бла, какой то сложный код, который обрабатывает добавление элемента в хэшсет
+    */
+
+    return true; // <<== А это выход, если элемент таки удалось добавить
+}
+```
+
+Какой вывод можно сделать из увиденного? Чтобы новый элемент нельзя было добавить в хэшсет (т.к. там уже есть старый элемент) должно выполниться 2 условия: 
+- хэшкоды этих элементов совпадают
+- метод `Equals()` возвращает `true` для этой пары.
+
+Очевидно, что реализация `GetHashCode()` использованная ранее генерирует хэшкоды неконсистетно с функцией сравнения, что и приводит к тому, что некоторые "одинаковые" элеметы можно добавить в один хэшсет.
+
+# Исправляем баг
+Перепишем функцию `GetHashCode()`, чтобы она всегда возвращала константу, тогда левая часть условия `entry.HashCode == hashCode && comparer.Equals(entry.Value, value)` всегда будет истинна, а собственно результат условия будет определяться только результатом `Equals()`.
+
+```cs
+public class PatchedTransactionComparer : TransactionComparer
+{
+    public override int GetHashCode(Transaction obj) => 0;
+}
+```
+И вуа ля! Все тесты зеленые, баг исправлен.
+
+# Скачать
+Весь код доступен в [демо-репозитории под тегом `v1`](https://github.com/zetroot/DifficultSimpleCompare/tree/v1/tests)
