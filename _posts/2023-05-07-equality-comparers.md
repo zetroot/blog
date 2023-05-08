@@ -230,5 +230,21 @@ public class PatchedTransactionComparer : TransactionComparer
 ```
 И вуа ля! Все тесты зеленые, баг исправлен.
 
+Для подтверждения того что баг побежден и теперь `Equals` и `Except` ведут себя консистентно добавим property based тест:
+```cs
+[FsCheck.NUnit.Property]
+public void Except_Consistent_WithEquals()
+{
+    var sut = new PatchedTransactionComparer();
+    Prop.ForAll<Transaction, Transaction>((l, r) =>
+    {
+        var equals = sut.Equals(l, r);
+        var diff = new[] { l }.Except(new[] { r }, sut).ToList(); 
+        diff.Any().Should().Be(!equals);
+    }).QuickCheckThrowOnFailure();
+}
+```
+Тест зеленый, все работает. Работа сделана.
+
 # Скачать
 Весь код доступен в [демо-репозитории под тегом `v1`](https://github.com/zetroot/DifficultSimpleCompare/tree/v1/tests)
