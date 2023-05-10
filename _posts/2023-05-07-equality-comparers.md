@@ -362,4 +362,4 @@ AMD Ryzen 5 2400G with Radeon Vega Graphics, 1 CPU, 8 logical and 4 physical cor
 Читайте Рихтера. Читайте msdn. Верьте QA. Пишите правильные тесты (ну то есть те которые тестируют тот код, который будет выполняться). Используйте property-based тестирование.
 
 # Скачать
-Весь код доступен в [демо-репозитории под тегом `v1`](https://github.com/zetroot/DifficultSimpleCompare/tree/v1/tests)
+Весь код доступен в [демо-репозитории](https://github.com/zetroot/DifficultSimpleCompare/)
