@@ -246,5 +246,120 @@ public void Except_Consistent_WithEquals()
 ```
 Тест зеленый, все работает. Работа сделана.
 
+# Tradeoff
+
+Тут строит задать вопрос: так если с этим `GetHashCode()` столько проблем, зачем оно вообще надо? Если в компараторах можно реализовать сложную и интересную логику, которая будет осуществлять сравнение двух записей по различным, возможно переменным, ключам, то что дает правильная реализация хэш-кода?
+
+**Скорость**. `HashSet` он же не просто `Set`, а использует хэши для поиска сравнения объектов. В худшем случае, при `GetHashCode() => const` добавление множества в самое себя выполняется за квадратичное время (каждый объект надо сравнить с каждым), а в оптимальном случае, когда хэшкод однозначно идентифицирует объект - добавление будет выполнено за линейное время (каждая запись добавляется за `O(1)`).
+
+Продемонстрируем это бенчмарком с немного измененной моделью данных:
+```cs   
+public record Data(int Group, string Key);
+```
+На которой сравним два вида компараторов:
+```cs
+public abstract class Comparer : IEqualityComparer<Data>
+{
+    public bool Equals(Data? x, Data? y)
+    {
+        if (x == null || y == null) return false;
+        if (x.Group != y.Group)
+        {
+            return false;
+        }
+
+        return string.Equals(x.Key, y.Key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public abstract int GetHashCode(Data obj);
+}
+
+public class ConstHashComparer : Comparer
+{
+    public override int GetHashCode(Data obj) => 0;
+}
+
+public class FullKeyComparer : Comparer
+{
+    public override int GetHashCode(Data obj) =>
+        HashCode.Combine(obj.Group.GetHashCode(), obj.Key.GetHashCode(StringComparison.OrdinalIgnoreCase));
+}
+```
+
+Собственно код бенчмарка незамысловат. Перед стартом генерируем 2 списка из случайных элементов, пытаемся вычислить разность между этими множествами используя один или другой компаратор:
+```cs
+public class Bench
+{
+    private Data BuildNewData(Random rng, int keyLen)
+    {
+        const string alphabet = "abcdefghijklmnopqrstuwxyz0123456789";
+        var sb = new StringBuilder(keyLen);
+        for (int i = 0; i < keyLen; ++i)
+        {
+            sb.Append(alphabet[rng.Next(0, alphabet.Length-1)]);
+        }
+
+        return new(rng.Next(0, 10), sb.ToString());
+    }
+
+    private List<Data> left;
+    private List<Data> right;
+    private readonly ConstHashComparer _constHashComparer = new();
+    private readonly FullKeyComparer _fullKeyComparer = new();
+    
+    [Params(100, 10_000)]
+    public int LeftLen { get; set; }
+
+    [Params(100, 10_000)]
+    public int RightLen { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        var rng = new Random();
+        left = new List<Data>(LeftLen);
+        for(int i = 0; i<LeftLen; ++i)
+            left.Add(BuildNewData(rng, 10));
+
+        right = new List<Data>(RightLen);
+        for(int i = 0; i<RightLen; ++i)
+            right.Add(BuildNewData(rng, 10));
+    }
+
+    [Benchmark]
+    public List<Data> ConstHashComparer() => left.Except(right, _constHashComparer).ToList();
+
+    [Benchmark]
+    public List<Data> FullKeyComparer() => left.Except(right, _fullKeyComparer).ToList();
+}
+```
+Пуск, немного ожидания и вот они результаты:
+```
+// * Summary *
+
+BenchmarkDotNet=v0.13.5, OS=ubuntu 23.04
+AMD Ryzen 5 2400G with Radeon Vega Graphics, 1 CPU, 8 logical and 4 physical cores
+.NET SDK=7.0.105
+  [Host]     : .NET 7.0.5 (7.0.523.17801), X64 RyuJIT AVX2
+  DefaultJob : .NET 7.0.5 (7.0.523.17801), X64 RyuJIT AVX2
+
+
+|            Method | LeftLen | RightLen |            Mean |         Error |        StdDev |
+|------------------ |-------- |--------- |----------------:|--------------:|--------------:|
+| ConstHashComparer |     100 |      100 |       239.67 us |      4.559 us |      5.067 us |
+|   FullKeyComparer |     100 |      100 |        12.05 us |      0.123 us |      0.109 us |
+| ConstHashComparer |     100 |    10000 |   593,223.83 us | 11,283.344 us | 10,002.390 us |
+|   FullKeyComparer |     100 |    10000 |       621.23 us |     11.546 us |     11.339 us |
+| ConstHashComparer |   10000 |      100 |   582,710.39 us |  3,615.278 us |  3,381.733 us |
+|   FullKeyComparer |   10000 |      100 |       902.72 us |      2.939 us |      2.606 us |
+| ConstHashComparer |   10000 |    10000 | 2,389,666.31 us | 47,119.876 us | 56,092.861 us |
+|   FullKeyComparer |   10000 |    10000 |     1,794.25 us |     33.850 us |     49.618 us |
+
+```
+Очевидная победа за `FullKeyComparer`!
+
+# Мораль
+Читайте Рихтера. Читайте msdn. Верьте QA. Пишите правильные тесты (ну то есть те которые тестируют тот код, который будет выполняться). Используйте property-based тестирование.
+
 # Скачать
-Весь код доступен в [демо-репозитории под тегом `v1`](https://github.com/zetroot/DifficultSimpleCompare/tree/v1/tests)
+Весь код доступен в [демо-репозитории](https://github.com/zetroot/DifficultSimpleCompare/)
